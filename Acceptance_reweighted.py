@@ -47,6 +47,28 @@ print("Nbins Y   =", hRef.GetNbinsY())
 print("==============================")
 
 # ============================================================
+# 分析 binning 模板：34 pT × 6 |y|
+# 权重图仍用 hRef (68×12)，分析直方图 Clone 这个模板
+# ============================================================
+
+analysisYBins = array("d", [0.0, 0.3, 0.6, 0.9, 1.2, 1.8, 2.4])
+
+analysisPtBins = array("d", [
+    10.0, 10.5, 11.0, 11.5, 12.0, 13.0,
+    14.0, 15.0, 16.0, 17.0, 18.0, 19.0,
+    20.0, 21.0, 22.0, 23.0, 24.0, 25.0,
+    26.0, 27.0, 28.0, 29.0, 30.0, 32.0,
+    34.0, 36.0, 38.0, 42.0, 46.0, 50.0,
+    60.0, 75.0, 95.0, 120.0, 200.0
+])
+
+hAnalysisTemplate = ROOT.TH2D(
+    "hAnalysisTemplate", "",
+    len(analysisPtBins) - 1, analysisPtBins,
+    len(analysisYBins) - 1, analysisYBins
+)
+
+# ============================================================
 # GEN particle handle
 # ============================================================
 
@@ -197,12 +219,14 @@ def getPtYWeight(pt, y):
 # Unweighted acceptance histograms
 # ============================================================
 
-hDenomOriginal = hRef.Clone("hDenomOriginal")
+#hDenomOriginal = hRef.Clone("hDenomOriginal")
+hDenomOriginal  = hAnalysisTemplate.Clone("hDenomOriginal")
 hDenomOriginal.Reset()
 
 hDenomOriginal.SetTitle("Unweighted GEN J/#psi denominator;""p_{T} [GeV];|y|")
 
-hNumerOriginal = hRef.Clone("hNumerOriginal")
+#hNumerOriginal = hRef.Clone("hNumerOriginal")
+hNumerOriginal  = hAnalysisTemplate.Clone("hNumerOriginal")
 hNumerOriginal.Reset()
 
 hNumerOriginal.SetTitle("Unweighted accepted J/#psi numerator;""p_{T} [GeV];|y|")
@@ -211,12 +235,14 @@ hNumerOriginal.SetTitle("Unweighted accepted J/#psi numerator;""p_{T} [GeV];|y|"
 # Weighted acceptance Histograms
 # ============================================================
 
-hDenomWeighted = hRef.Clone("hDenomWeighted")
+#hDenomWeighted = hRef.Clone("hDenomWeighted")
+hDenomWeighted  = hAnalysisTemplate.Clone("hDenomWeighted")
 hDenomWeighted.Reset()
 
 hDenomWeighted.SetTitle("Weighted GEN J/#psi denominator;" "p_{T} [GeV];|y|")
 
-hNumerWeighted = hRef.Clone("hNumerWeighted")
+#hNumerWeighted = hRef.Clone("hNumerWeighted")
+hNumerWeighted  = hAnalysisTemplate.Clone("hNumerWeighted")
 hNumerWeighted.Reset()
 
 hNumerWeighted.SetTitle("Weighted accepted J/#psi numerator;" "p_{T} [GeV];|y|")
@@ -325,38 +351,33 @@ for iev, event in enumerate(events):
         if not (yMin <= y < yMax):
             continue
 
-        weight = getPtYWeight(pt, y)
+        nSelected += 1
+        hPtOriginal.Fill(pt)
+        hYOriginal.Fill(y)
+        hDenomOriginal.Fill(pt, y)
 
+        muons = find_final_muons(p)
+        accepted = (
+            len(muons) == 2
+            and muon_pass_criteria(muons[0])
+            and muon_pass_criteria(muons[1])
+        )
+        if accepted:
+            hNumerOriginal.Fill(pt, y)
+            nAccepted += 1
+
+        # ---------- 2) 加权：只在 weight>0 的事件上填 ----------
+        weight = getPtYWeight(pt, y)
         if weight <= 0:
             continue
 
-        nSelected += 1
-
         sumWeights += weight
-
-        hPtOriginal.Fill(pt)
         hPtWeighted.Fill(pt, weight)
-
-        hYOriginal.Fill(y)
         hYWeighted.Fill(y, weight)
-       
-        hDenomOriginal.Fill(pt, y)
-        hDenomWeighted.Fill(pt,y,weight)
-      
-        muons = find_final_muons(p)
+        hDenomWeighted.Fill(pt, y, weight)
 
-        if len(muons) != 2:
-            continue
-
-        if (
-            muon_pass_criteria(muons[0])
-            and
-            muon_pass_criteria(muons[1])
-        ):
-            hNumerOriginal.Fill(pt, y)
-            hNumerWeighted.Fill(pt, y,weight)
-
-            nAccepted += 1
+        if accepted:
+            hNumerWeighted.Fill(pt, y, weight)
 
 # ============================================================
 # Unweighted acceptance
@@ -650,17 +671,12 @@ cWeight.SaveAs("Jpsi_pT_y_weight.png")
 # Original:X = pT Y = |y|
 # New:X = |y|  Y = pT
 # ============================================================
-yBins = array( 'd',[0.0,0.3,0.6,0.9,1.2,1.8, 2.4])
-
-ptBins = array('d',[10,10.5,11,11.5,12,13,14,15, 16,17,18,19, 20,21,22,23,24,25,26,27,28,29,30,32,34,36,38,42,46,50,60,75,95,120,200])
 
 hAcceptanceWeighted_Transpose = ROOT.TH2D(
     "hAcceptanceWeighted_Transpose",
     "Weighted J/#psi acceptance;|y|;p_{T} [GeV]",
-    len(yBins) - 1,
-    yBins,
-    len(ptBins) - 1,
-    ptBins)
+    len(analysisYBins) - 1, analysisYBins,
+    len(analysisPtBins) - 1, analysisPtBins)
 
 hAcceptanceWeighted_Transpose.SetDirectory(0)
 
@@ -687,7 +703,6 @@ for ix in range(
 # X = |y|  Y = pT
 # ============================================================
 
-ROOT.gStyle.SetOptStat(0)
 ROOT.gStyle.SetPaintTextFormat("4.2f")
 
 cAcceptanceWeighted = ROOT.TCanvas("cAcceptanceWeighted","Weighted Acceptance Map", 1000,800)
