@@ -723,8 +723,7 @@ hAcceptanceWeighted_Transpose.GetYaxis().SetRangeUser(10.0,200.0)
 hAcceptanceWeighted_Transpose.Draw("COLZ")
 cAcceptanceWeighted.Update()
 
-#cAcceptanceWeighted.SaveAs("Jpsi_acceptance_weighted.png")
-cAcceptanceWeighted.SaveAs("Jpsi_acceptance_weighted_v2.png")
+cAcceptanceWeighted.SaveAs("Jpsi_acceptance_weighted.png")
 #cAcceptanceWeighted.SaveAs("Jpsi_acceptance_weighted_test.png")
 
 # ============================================================
