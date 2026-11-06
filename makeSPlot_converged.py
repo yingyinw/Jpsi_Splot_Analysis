@@ -274,10 +274,10 @@ fitResult.Print()
 for par in fitResult.floatParsFinal():
     print(f"{par.GetName()}.setVal({par.getVal():.8g} )")
 
+# ================================================================
+#  sPlot: Calculate sWeights
+# ================================================================
 
-# ================================================================
-#  sPlot: prompt J/psi pT-y distribution
-# ================================================================
 sData = ROOT.RooStats.SPlot(
     "sData",
     "sData",
@@ -285,6 +285,59 @@ sData = ROOT.RooStats.SPlot(
     pdf_total,
     ROOT.RooArgList(nPrompt, nNonPrompt, nBkg)
 )
+
+# Get the dataset containing sWeight variables.
+sWeightedData = sData.GetSDataSet()
+
+if not sWeightedData:
+    raise RuntimeError("Cannot retrieve sWeightedData")
+
+if sWeightedData.numEntries() != data.numEntries():
+    raise RuntimeError("sWeightedData entries do not match data")
+
+# Check nPrompt_sw.
+firstRow = sWeightedData.get(0)
+
+weightVariable = firstRow.find("nPrompt_sw")
+
+if not weightVariable:
+    raise RuntimeError(
+        "Cannot find nPrompt_sw in sWeightedData"
+    )
+
+print("==========================================")
+print("sPlot validation")
+print("Original entries =", data.numEntries())
+print("Weighted entries =", sWeightedData.numEntries())
+print("Fitted prompt yield =", nPrompt.getVal())
+
+sumPromptWeights = sData.GetYieldFromSWeight("nPrompt")
+
+print("Sum of prompt sWeights =", sumPromptWeights)
+print("First prompt sWeight =", weightVariable.getVal())
+print("==========================================")
+
+# ================================================================
+#  sPlot: prompt J/psi pT-y distribution
+# ================================================================
+
+HIGH_Y_MIN = 1.8
+
+# ------------------------------------------------
+# Original pT bins are already divided into two.
+# Merge every two adjacent bins for |y| >= 1.8.
+# ------------------------------------------------
+
+if (len(ptBins) - 1) % 2 != 0:
+    raise ValueError("The number of fine pT bins must be even.")
+
+ptBinsCoarse = array("d", list(ptBins)[::2])
+
+# ------------------------------------------------
+# 1. Original TH2D
+# Keep the original 68 x 12 binning.
+# Used only for backward compatibility and projections.
+# ------------------------------------------------
 
 hPromptPtY = ROOT.TH2D(
     "hPromptPtY",
@@ -295,17 +348,109 @@ hPromptPtY = ROOT.TH2D(
     yBins
 )
 
-for i in range(data.numEntries()):
-    row = data.get(i)
+# ------------------------------------------------
+# 2. New TH2Poly
+#
+# |y| < 1.8:
+#     68 pT bins
+#
+# |y| >= 1.8:
+#     34 pT bins
+# ------------------------------------------------
+
+hPromptPtY_variable = ROOT.TH2Poly(
+    "hPromptPtY_variable",
+    "Prompt J/#psi (variable binning); "
+    "p_{T}(J/#psi) [GeV]; |y(J/#psi)|",
+    ptBins[0],
+    ptBins[-1],
+    yBins[0],
+    yBins[-1]
+)
+
+nVariableBins = 0
+
+for iy in range(len(yBins) - 1):
+
+    yLow = yBins[iy]
+    yHigh = yBins[iy + 1]
+
+    # Select pT binning according to rapidity.
+    if yLow < HIGH_Y_MIN:
+        currentPtBins = ptBins
+    else:
+        currentPtBins = ptBinsCoarse
+
+    for ipt in range(len(currentPtBins) - 1):
+
+        ptLow = currentPtBins[ipt]
+        ptHigh = currentPtBins[ipt + 1]
+
+        binNumber = hPromptPtY_variable.AddBin(
+            ptLow,
+            yLow,
+            ptHigh,
+            yHigh
+        )
+
+        if binNumber <= 0:
+            raise RuntimeError(
+                "Failed to create TH2Poly bin"
+            )
+
+        nVariableBins += 1
+
+# Enable Sumw2 for weighted histograms.
+hPromptPtY.Sumw2()
+hPromptPtY_variable.Sumw2()
+
+if nVariableBins != 748:
+    raise RuntimeError(
+        f"Unexpected number of bins: {nVariableBins}"
+    )
+
+print("==========================================")
+print("sPlot pT-y binning")
+print("==========================================")
+print("Original TH2D bins:")
+print("pT bins =", len(ptBins) - 1)
+print("y bins  =", len(yBins) - 1)
+print("------------------------------------------")
+print("New variable binning:")
+print("Fine pT bins   =", len(ptBins) - 1)
+print("Coarse pT bins =", len(ptBinsCoarse) - 1)
+print("y bins         =", len(yBins) - 1)
+print("Total bins     =", nVariableBins)
+print("==========================================")
+
+# ------------------------------------------------
+# Fill sPlot weights
+# ------------------------------------------------
+
+for i in range(sWeightedData.numEntries()):
+
+    row = sWeightedData.get(i)
+
     pt = row.getRealValue("pt")
     rapidity = row.getRealValue("rapidity")
     promptWeight = row.getRealValue("nPrompt_sw")
 
+    # Original TH2D: keep the old binning.
     hPromptPtY.Fill(pt, rapidity, promptWeight)
+
+    # New TH2Poly: use the updated variable binning.
+    hPromptPtY_variable.Fill(
+        pt,
+        rapidity,
+        promptWeight
+    )
+
+# ------------------------------------------------
+# Inclusive pT and y projections
+# ------------------------------------------------
 
 hPromptPt = hPromptPtY.ProjectionX("hPromptPt")
 hPromptY = hPromptPtY.ProjectionY("hPromptY")
-
 # ================================================================
 #  Fit cross-check plots
 # ================================================================
@@ -403,11 +548,18 @@ pdf_total.plotOn(
 #  Save output histograms and fit cross-check plots
 # ================================================================
 output_file = ROOT.TFile("fitOutput_final.root", "RECREATE")
-#output_file = ROOT.TFile("fitOutput.root", "RECREATE")
 
+# Original histogram (68 x 12).
 hPromptPtY.Write()
+
+# New variable-binning histogram (748 bins).
+hPromptPtY_variable.Write()
+
+# Inclusive projections.
 hPromptPt.Write()
 hPromptY.Write()
+
+# Fit cross-check plots.
 plotMass.Write()
 plotCtau.Write()
 
