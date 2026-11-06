@@ -33,17 +33,31 @@ fRef = ROOT.TFile.Open(refFile)
 if not fRef or fRef.IsZombie():
     raise RuntimeError("Cannot open fitOutput_final.root")
 
-hRef = fRef.Get("hPromptPtY")
+hRef = fRef.Get("hPromptPtY_variable")
 
 if not hRef:
-    raise RuntimeError("Cannot find hPromptPtY in fitOutput_final.root")
+    raise RuntimeError(
+        "Cannot find hPromptPtY_variable in fitOutput_final.root"
+    )
+
+if not hRef.InheritsFrom("TH2Poly"):
+    raise RuntimeError(
+        "hPromptPtY_variable is not a TH2Poly histogram"
+    )
+
+nRefBins = hRef.GetNumberOfBins()
+
+if nRefBins != 748:
+    raise RuntimeError(
+        f"Unexpected number of reference bins: {nRefBins}, expected 748"
+    )
 
 print("==============================")
 print("Reference histogram")
-print("Name      =", hRef.GetName())
-print("Integral  =", hRef.Integral())
-print("Nbins X   =", hRef.GetNbinsX())
-print("Nbins Y   =", hRef.GetNbinsY())
+print("Name       =", hRef.GetName())
+print("Type       =", hRef.ClassName())
+print("Integral   =", hRef.Integral())
+print("Total bins =", nRefBins)
 print("==============================")
 
 # ============================================================
@@ -91,8 +105,11 @@ yMax = hRef.GetYaxis().GetXmax()
 # ============================================================
 
 hGenPtY = hRef.Clone("hGenPtY")
-hGenPtY.Reset()
+#hGenPtY.Reset()
+hGenPtY.Reset("")
 hGenPtY.SetTitle("MC generated J/#psi;p_{T} [GeV];|y|")
+
+hGenPtY.Sumw2()
 
 events = Events(files)
 
@@ -144,46 +161,79 @@ print("==============================")
 #     normalized prompt DATA
 #     ----------------------
 #     normalized Particle Gun MC
+#
+# Variable binning: 748 bins
 # ============================================================
 
 hWeight = hRef.Clone("hPtYWeight")
-hWeight.Reset()
+#hWeight.Reset()
+hWeight.Reset("")
 
-hWeight.SetTitle("p_{T}-|y| reweighting factor;p_{T} [GeV];|y|")
+hWeight.SetTitle(
+    "p_{T}-|y| reweighting factor;p_{T} [GeV];|y|"
+)
 
 refIntegral = hRef.Integral()
 genIntegral = hGenPtY.Integral()
 
 if refIntegral <= 0:
     raise RuntimeError(
-        "Reference histogram hPromptPtY has zero integral")
+        "Reference histogram hPromptPtY_variable has zero integral"
+    )
 
 if genIntegral <= 0:
     raise RuntimeError(
-        "MC histogram hGenPtY has zero integral")
+        "MC histogram hGenPtY has zero integral"
+    )
 
-for ix in range(1, hRef.GetNbinsX() + 1):
+# Calculate weight for each variable bin.
+for ibin in range(1, nRefBins + 1):
 
-    for iy in range(1, hRef.GetNbinsY() + 1):
+    refContent = hRef.GetBinContent(ibin)
+    genContent = hGenPtY.GetBinContent(ibin)
 
-        refContent = hRef.GetBinContent(ix, iy)
-        genContent = hGenPtY.GetBinContent(ix, iy)
+    refFrac = refContent / refIntegral
+    genFrac = genContent / genIntegral
 
-        refFrac = refContent / refIntegral
-        genFrac = genContent / genIntegral
+    if genFrac > 0:
+        weight = refFrac / genFrac
+    else:
+        weight = 0.0
 
-        if genFrac > 0:
-            weight = refFrac / genFrac
-        else:
-            weight = 0.0
-
-        hWeight.SetBinContent(ix, iy, weight)
+    hWeight.SetBinContent(ibin, weight)
 
 print("==============================")
 print("Weight map created")
+print("Number of bins =", hWeight.GetNumberOfBins())
 print("Weight minimum =", hWeight.GetMinimum())
 print("Weight maximum =", hWeight.GetMaximum())
 print("==============================")
+
+# ============================================================
+# Check variable binning
+# ============================================================
+
+print("==========================================")
+print("Variable binning validation")
+print("==========================================")
+
+print("Reference bins =", hRef.GetNumberOfBins())
+print("MC bins        =", hGenPtY.GetNumberOfBins())
+print("Weight bins    =", hWeight.GetNumberOfBins())
+
+print("Reference integral =", hRef.Integral())
+print("MC integral        =", hGenPtY.Integral())
+
+print("==========================================")
+
+if hRef.GetNumberOfBins() != hGenPtY.GetNumberOfBins():
+    raise RuntimeError("DATA and MC binning mismatch!")
+
+if hRef.GetNumberOfBins() != hWeight.GetNumberOfBins():
+    raise RuntimeError("Reference and weight binning mismatch!")
+
+if abs(hWeight.Integral()) == 0:
+    raise RuntimeError("Weight histogram is empty!")
 
 # ============================================================
 # Weight function
@@ -199,16 +249,15 @@ def getPtYWeight(pt, y):
     if not (yMin <= y < yMax):
         return 0.0
 
-    ix = hWeight.GetXaxis().FindFixBin(pt)
-    iy = hWeight.GetYaxis().FindFixBin(y)
+    # Find the variable bin containing this GEN J/psi.
+    ibin = hWeight.FindBin(pt, y)
 
-    if ix < 1 or ix > hWeight.GetNbinsX():
+    # TH2Poly returns negative bin numbers for
+    # underflow, overflow and unbinned regions.
+    if ibin < 1 or ibin > nRefBins:
         return 0.0
 
-    if iy < 1 or iy > hWeight.GetNbinsY():
-        return 0.0
-
-    weight = hWeight.GetBinContent(ix, iy)
+    weight = hWeight.GetBinContent(ibin)
 
     if weight <= 0:
         return 0.0
